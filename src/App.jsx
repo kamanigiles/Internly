@@ -373,17 +373,20 @@ const emptyScholarship = () => ({
 });
 
 const VOLUNTEER_STORAGE_KEY = "internly:volunteering";
-const VOLUNTEER_STATUSES = ["Researching", "Applied", "Confirmed", "Completed"];
+const VOLUNTEER_STATUSES = ["Researching", "Applied", "Confirmed", "Ghosted", "Completed"];
 const VOLUNTEER_STATUS_META = {
   Researching: { label: "Researching", dot: "#B48CFF" },
   Applied: { label: "Applied", dot: "#3DA5FF" },
   Confirmed: { label: "Confirmed", dot: "#FFB400" },
+  Ghosted: { label: "Ghosted", dot: "#8A8A8A" },
   Completed: { label: "Completed", dot: "#2FBF71" },
 };
 const emptyVolunteer = () => ({
   id: uid(), organization: "", role: "", hours: "", date: "",
   status: "Researching", location: "", link: "", notes: "",
+  startDate: "", endDate: "", daysLogged: [],
 });
+const emptyVolunteerDay = () => ({ id: uid(), date: "", hours: "" });
 
 const STORAGE_KEY = "internly:applications";
 
@@ -2626,6 +2629,7 @@ function GradeScaleEditor({ gradeScale, onSave }) {
 }
 
 function TransferCreditsSection({ transferCredits, loading, onPersist }) {
+  const [expanded, setExpanded] = useState(false);
   const list = transferCredits || [];
   const totalCredits = list.reduce((sum, t) => sum + (parseFloat(t.credits) || 0), 0);
 
@@ -2647,12 +2651,19 @@ function TransferCreditsSection({ transferCredits, loading, onPersist }) {
 
   return (
     <div className="settings-section">
-      <h3 className="settings-title">Transfer credits</h3>
-      <p className="settings-sub">
-        AP scores, dual enrollment, community college transfer, or other credit from outside your current school.
-        {totalCredits > 0 && ` ${totalCredits} credits total.`}
-      </p>
+      <button className="collapsible-head" onClick={() => setExpanded((v) => !v)}>
+        <div className="collapsible-head-text">
+          <h3 className="settings-title">Transfer credits</h3>
+          <p className="settings-sub">
+            AP scores, dual enrollment, community college transfer, or other credit from outside your current school.
+            {totalCredits > 0 && ` ${totalCredits} credits total.`}
+          </p>
+        </div>
+        <ChevronDown size={16} className={`collapsible-chevron ${expanded ? "collapsible-chevron-open" : ""}`} />
+      </button>
 
+      {expanded && (
+        <>
       {list.length > 0 && (
         <div className="transfer-credit-list">
           <div className="transfer-credit-row transfer-credit-row-head">
@@ -2697,6 +2708,8 @@ function TransferCreditsSection({ transferCredits, loading, onPersist }) {
         <Plus size={13} />
         Add transfer credit
       </button>
+        </>
+      )}
     </div>
   );
 }
@@ -3453,6 +3466,9 @@ function VolunteerCard({ item, onEdit, onDelete, onStatusChange, onQuickView }) 
       <div className="card-meta">
         {item.location && <span className="meta-item"><MapPin size={12} />{item.location}</span>}
         {item.hours && <span className="meta-item"><Clock size={12} />{item.hours} hrs</span>}
+        {(item.startDate || item.endDate) && (
+          <span className="meta-item"><Calendar size={12} />{formatDuration(item.startDate, item.endDate)}</span>
+        )}
       </div>
 
       <div className="card-bottom">
@@ -3490,6 +3506,56 @@ function VolunteerCard({ item, onEdit, onDelete, onStatusChange, onQuickView }) 
               </button>
             ))}
           </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function VolunteerDayTracker({ daysLogged, onChange, onUseTotalHours }) {
+  const list = daysLogged || [];
+  const total = list.reduce((sum, d) => sum + (parseFloat(d.hours) || 0), 0);
+
+  const addDay = () => onChange([...list, emptyVolunteerDay()]);
+  const updateDay = (id, field, value) =>
+    onChange(list.map((d) => (d.id === id ? { ...d, [field]: value } : d)));
+  const removeDay = (id) => onChange(list.filter((d) => d.id !== id));
+
+  return (
+    <div className="field-full">
+      <span className="field-label-row">
+        Volunteer day log
+        <span className="field-label-hint">Optional - track individual days instead of one total</span>
+      </span>
+
+      {list.length > 0 && (
+        <div className="volunteer-day-list">
+          <div className="volunteer-day-row volunteer-day-row-head">
+            <span>Date</span>
+            <span>Hours</span>
+            <span></span>
+          </div>
+          {list.map((d) => (
+            <div className="volunteer-day-row" key={d.id}>
+              <input type="date" value={d.date} onChange={(e) => updateDay(d.id, "date", e.target.value)} />
+              <input value={d.hours} onChange={(e) => updateDay(d.id, "hours", e.target.value)} inputMode="decimal" placeholder="2" />
+              <button className="icon-btn" onClick={() => removeDay(d.id)} aria-label="Remove day">
+                <Trash2 size={13} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="volunteer-day-actions">
+        <button type="button" className="course-add-trigger" onClick={addDay}>
+          <Plus size={13} />
+          Log a day
+        </button>
+        {list.length > 0 && (
+          <button type="button" className="btn btn-ghost" onClick={() => onUseTotalHours(total)}>
+            Use {total} hrs as total
+          </button>
         )}
       </div>
     </div>
@@ -3542,6 +3608,23 @@ function VolunteerModal({ draft, setDraft, isEditing, onCancel, onSave }) {
               <LocationInput value={draft.location} onChange={(v) => setDraft({ ...draft, location: v })} />
             </label>
           </div>
+
+          <div className="field-row">
+            <label>
+              Start date
+              <input type="date" value={draft.startDate} onChange={set("startDate")} />
+            </label>
+            <label>
+              End date
+              <input type="date" value={draft.endDate} onChange={set("endDate")} />
+            </label>
+          </div>
+
+          <VolunteerDayTracker
+            daysLogged={draft.daysLogged || []}
+            onChange={(next) => setDraft({ ...draft, daysLogged: next })}
+            onUseTotalHours={(total) => setDraft({ ...draft, hours: String(total) })}
+          />
 
           <label className="field-full">
             Listing link
@@ -3611,6 +3694,18 @@ function VolunteerQuickView({ item, onClose, onEdit, onStatusChange }) {
               <div className="qv-field">
                 <span className="qv-field-label"><Calendar size={12} />Date</span>
                 <span className="qv-field-value">{item.date}</span>
+              </div>
+            )}
+            {(item.startDate || item.endDate) && (
+              <div className="qv-field">
+                <span className="qv-field-label"><Calendar size={12} />Duration</span>
+                <span className="qv-field-value">{formatDuration(item.startDate, item.endDate)}</span>
+              </div>
+            )}
+            {item.daysLogged && item.daysLogged.length > 0 && (
+              <div className="qv-field">
+                <span className="qv-field-label"><Check size={12} />Days logged</span>
+                <span className="qv-field-value">{item.daysLogged.length}</span>
               </div>
             )}
           </div>
@@ -6052,6 +6147,31 @@ const CSS = `
   outline: none; background: #fff; width: 100%;
 }
 .transfer-credit-row input:focus, .transfer-credit-row select:focus { border-color: var(--coral); }
+
+.field-label-row {
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  font-size: 12.5px; font-weight: 600; color: var(--ink);
+  margin-bottom: 6px;
+}
+.field-label-hint { font-size: 11px; font-weight: 500; color: var(--ink-soft); }
+
+.volunteer-day-list { margin-bottom: 8px; }
+.volunteer-day-row {
+  display: grid; grid-template-columns: 1fr 90px 30px;
+  gap: 6px; align-items: center; padding: 3px 0;
+}
+.volunteer-day-row-head span {
+  font-size: 10px; font-weight: 700; color: var(--ink-soft);
+  text-transform: uppercase; letter-spacing: 0.03em;
+}
+.volunteer-day-row input {
+  font-family: 'Inter', sans-serif;
+  border: 1px solid var(--line); border-radius: 7px;
+  padding: 6px 7px; font-size: 12px; color: var(--ink);
+  outline: none; background: #fff; width: 100%;
+}
+.volunteer-day-row input:focus { border-color: var(--coral); }
+.volunteer-day-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 
 .course-add-trigger {
   display: flex; align-items: center; justify-content: center; gap: 6px;
