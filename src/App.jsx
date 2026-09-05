@@ -273,7 +273,7 @@ const CATEGORIES = ["Major", "Gen-Ed", "Elective"];
 
 const emptyCourse = () => ({
   id: uid(), courseId: "", name: "", credits: "3",
-  category: "Gen-Ed", goalGrade: "A", actualGrade: "",
+  category: "Gen-Ed", goalGrade: "A", actualGrade: "", inProgressGrade: "",
 });
 const emptySemester = () => ({ id: uid(), name: "", courses: [] });
 const TRANSFER_CREDIT_TYPES = ["Transfer Credit", "AP Credit", "Dual Enrollment", "High School Credit", "CLEP / Exam Credit"];
@@ -299,6 +299,7 @@ function semesterGpa(semester, gradePoints) {
   const points_map = gradePoints || {};
   let actualPoints = 0, actualCredits = 0;
   let goalPoints = 0, goalCredits = 0;
+  let currentPoints = 0, currentCredits = 0;
   const byCategory = {};
   (semester.courses || []).forEach((c) => {
     const cr = parseFloat(c.credits);
@@ -315,12 +316,23 @@ function semesterGpa(semester, gradePoints) {
       goalPoints += cr * points_map[c.goalGrade];
       goalCredits += cr;
     }
+    // "Current" reflects the best information available for a course right
+    // now: the final grade if it's in, otherwise the in-progress estimate.
+    // This is separate from "actual" so an unfinished, estimated grade
+    // never quietly counts as an official final GPA.
+    const currentGrade = c.actualGrade || c.inProgressGrade;
+    if (currentGrade && points_map[currentGrade] !== undefined) {
+      currentPoints += cr * points_map[currentGrade];
+      currentCredits += cr;
+    }
   });
   return {
     actualGpa: actualCredits > 0 ? actualPoints / actualCredits : null,
     actualCredits, actualPoints,
     goalGpa: goalCredits > 0 ? goalPoints / goalCredits : null,
     goalCredits, goalPoints,
+    currentGpa: currentCredits > 0 ? currentPoints / currentCredits : null,
+    currentPoints, currentCredits,
     byCategory,
   };
 }
@@ -329,6 +341,7 @@ function semesterGpa(semester, gradePoints) {
 function cumulativeGpa(semesters, gradePoints) {
   let actualPoints = 0, actualCredits = 0;
   let goalPoints = 0, goalCredits = 0;
+  let currentPoints = 0, currentCredits = 0;
   const byCategory = {};
   (semesters || []).forEach((s) => {
     const r = semesterGpa(s, gradePoints);
@@ -336,6 +349,8 @@ function cumulativeGpa(semesters, gradePoints) {
     actualCredits += r.actualCredits;
     goalPoints += r.goalPoints;
     goalCredits += r.goalCredits;
+    currentPoints += r.currentPoints;
+    currentCredits += r.currentCredits;
     Object.entries(r.byCategory).forEach(([cat, v]) => {
       byCategory[cat] = byCategory[cat] || { planned: 0, completed: 0 };
       byCategory[cat].planned += v.planned;
@@ -346,6 +361,7 @@ function cumulativeGpa(semesters, gradePoints) {
     gpa: actualCredits > 0 ? actualPoints / actualCredits : null,
     credits: actualCredits,
     goalGpa: goalCredits > 0 ? goalPoints / goalCredits : null,
+    currentGpa: currentCredits > 0 ? currentPoints / currentCredits : null,
     byCategory,
   };
 }
@@ -2400,7 +2416,8 @@ function SemesterCard({ semester, index, threshold, grades, gradePoints, default
                 <span>Credits</span>
                 <span>Category</span>
                 <span>Goal</span>
-                <span>Actual</span>
+                <span>In progress</span>
+                <span>Final</span>
                 <span></span>
               </div>
               {semester.courses.map((c) => (
@@ -2425,6 +2442,14 @@ function SemesterCard({ semester, index, threshold, grades, gradePoints, default
                     {CATEGORIES.map((cat) => <option key={cat} value={cat}>{cat}</option>)}
                   </select>
                   <select value={c.goalGrade} onChange={(e) => updateCourse(c.id, { goalGrade: e.target.value })}>
+                    {grades.map((g) => <option key={g} value={g}>{g}</option>)}
+                  </select>
+                  <select
+                    value={c.inProgressGrade || ""}
+                    onChange={(e) => updateCourse(c.id, { inProgressGrade: e.target.value })}
+                    title="Current estimated grade while the course is still in progress"
+                  >
+                    <option value="">-</option>
                     {grades.map((g) => <option key={g} value={g}>{g}</option>)}
                   </select>
                   <select value={c.actualGrade} onChange={(e) => updateCourse(c.id, { actualGrade: e.target.value })}>
@@ -2490,7 +2515,11 @@ function SemesterQuickView({ semester, index, stats, isDeansList, onClose }) {
                   <span className="qv-course-name">{c.name || c.courseId || "Untitled course"}</span>
                   <span className="qv-course-meta">{c.credits || "N/A"} cr · {c.category}</span>
                   <span className="qv-course-grade">
-                    {c.actualGrade ? c.actualGrade : `Goal: ${c.goalGrade}`}
+                    {c.actualGrade
+                      ? c.actualGrade
+                      : c.inProgressGrade
+                      ? `In progress: ${c.inProgressGrade}`
+                      : `Goal: ${c.goalGrade}`}
                   </span>
                 </div>
               ))
@@ -2740,6 +2769,8 @@ function AcademicsPage({ semesters, settings, loading, onPersist, onPersistSetti
   const grades = scaleGrades(gradeScale);
   const cumulative = cumulativeGpa(list, gradePoints);
   const cumulativeStr = cumulative.gpa === null ? null : cumulative.gpa.toFixed(2);
+  const hasInProgressGrades = list.some((s) => (s.courses || []).some((c) => c.inProgressGrade && !c.actualGrade));
+  const currentGpaStr = cumulative.currentGpa === null ? null : cumulative.currentGpa.toFixed(2);
   const threshold = parseFloat(settings.deansListThreshold) || 3.5;
   const degreeCredits = parseFloat(settings.degreeCredits) || 0;
   const transferCreditsList = transferCredits || [];
@@ -2856,6 +2887,13 @@ function AcademicsPage({ semesters, settings, loading, onPersist, onPersistSetti
         <StatCard label="Completed semesters" value={completedSemesters} icon={<Calendar size={16} />} accent="#2FBF71" />
         <StatCard label="Dean's List semesters" value={deansListCount} icon={<Star size={16} />} accent="#FFC857" />
       </div>
+
+      {hasInProgressGrades && currentGpaStr !== null && (
+        <div className="in-progress-banner">
+          <Sparkles size={14} />
+          Including in-progress grades, your GPA is currently estimated at <strong>{currentGpaStr}</strong>.
+        </div>
+      )}
 
       {cumulativeStr !== null && (
         <div className="gpa-sync-banner">
@@ -6019,6 +6057,14 @@ const CSS = `
 }
 .gpa-sync-banner span { font-size: 12.5px; color: var(--ink); }
 
+.in-progress-banner {
+  display: flex; align-items: center; gap: 8px;
+  background: #EFF6FF; border: 1px solid #CFE3FD; border-radius: 12px;
+  padding: 10px 16px; margin-bottom: 16px;
+  font-size: 12.5px; color: #2A5C9E;
+}
+.in-progress-banner svg { flex-shrink: 0; color: #3378D8; }
+
 .academics-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 
 .grad-progress { margin-bottom: 14px; }
@@ -6115,8 +6161,8 @@ const CSS = `
 
 .course-table { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; overflow-x: auto; }
 .course-row {
-  display: grid; grid-template-columns: 90px 1.4fr 64px 100px 74px 74px 26px;
-  gap: 6px; align-items: center; min-width: 620px;
+  display: grid; grid-template-columns: 84px 1.3fr 56px 90px 66px 74px 66px 26px;
+  gap: 6px; align-items: center; min-width: 700px;
 }
 .course-row-head span {
   font-size: 10px; font-weight: 700; color: var(--ink-soft);
