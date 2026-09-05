@@ -275,7 +275,15 @@ const emptyCourse = () => ({
   id: uid(), courseId: "", name: "", credits: "3",
   category: "Gen-Ed", goalGrade: "A", actualGrade: "", inProgressGrade: "",
 });
-const emptySemester = () => ({ id: uid(), name: "", courses: [], isCurrent: false });
+const emptySemester = () => ({ id: uid(), name: "", courses: [], status: "completed" });
+// Reads a semester's status, staying compatible with the older isCurrent
+// boolean so previously-saved semesters don't lose their "Current" marking.
+const semesterStatus = (semester) => semester.status || (semester.isCurrent ? "current" : "completed");
+const SEMESTER_STATUS_META = {
+  current:   { label: "Current",   className: "semester-status-current" },
+  completed: { label: "Completed", className: "semester-status-completed" },
+  future:    { label: "Future",    className: "semester-status-future" },
+};
 const TRANSFER_CREDIT_TYPES = ["Transfer Credit", "AP Credit", "Dual Enrollment", "High School Credit", "CLEP / Exam Credit"];
 const emptyTransferCredit = () => ({
   id: uid(), institution: "", courseName: "", type: "Transfer Credit", credits: "3", term: "",
@@ -2349,12 +2357,14 @@ function StatsPage({ apps }) {
   );
 }
 
-function SemesterCard({ semester, index, threshold, grades, gradePoints, defaultExpanded, onChange, onRemove, onSetCurrent }) {
+function SemesterCard({ semester, index, threshold, grades, gradePoints, defaultExpanded, onChange, onRemove, onSetStatus }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [expanded, setExpanded] = useState(defaultExpanded !== false);
   const [quickView, setQuickView] = useState(false);
   const stats = semesterGpa(semester, gradePoints);
   const isDeansList = stats.actualCredits > 0 && stats.actualGpa >= parseFloat(threshold || 3.5);
+
+  const status = semesterStatus(semester);
 
   const addCourse = () => {
     onChange({ ...semester, courses: [...semester.courses, emptyCourse()] });
@@ -2373,11 +2383,9 @@ function SemesterCard({ semester, index, threshold, grades, gradePoints, default
           <ChevronDown size={15} className={`collapsible-chevron ${expanded ? "collapsible-chevron-open" : ""}`} />
           <div className="semester-head-left">
             <span className="semester-name">{semester.name || `Semester ${index + 1}`}</span>
-            {semester.isCurrent ? (
-              <span className="semester-status-badge semester-status-current">Current</span>
-            ) : (
-              <span className="semester-status-badge semester-status-completed">Completed</span>
-            )}
+            <span className={`semester-status-badge ${SEMESTER_STATUS_META[status].className}`}>
+              {SEMESTER_STATUS_META[status].label}
+            </span>
             <span className="semester-gpa-badge">
               {stats.actualGpa === null ? "No grades yet" : `${stats.actualGpa.toFixed(2)} actual`}
             </span>
@@ -2401,11 +2409,17 @@ function SemesterCard({ semester, index, threshold, grades, gradePoints, default
             </div>
           ) : (
             <>
-              {!semester.isCurrent && (
-                <button className="icon-btn" onClick={(e) => { e.stopPropagation(); onSetCurrent(); }} aria-label="Set as current semester" title="Set as current semester">
-                  <Sparkles size={14} />
-                </button>
-              )}
+              <select
+                className="semester-status-select"
+                value={status}
+                onChange={(e) => onSetStatus(e.target.value)}
+                onClick={(e) => e.stopPropagation()}
+                aria-label="Semester status"
+              >
+                <option value="future">Future</option>
+                <option value="current">Current</option>
+                <option value="completed">Completed</option>
+              </select>
               <button className="icon-btn" onClick={() => setQuickView(true)} aria-label="Quick view" title="Quick view">
                 <Eye size={14} />
               </button>
@@ -2512,11 +2526,9 @@ function SemesterQuickView({ semester, index, stats, isDeansList, onClose }) {
 
         <div className="qv-body">
           <div className="qv-chips">
-            {semester.isCurrent ? (
-              <span className="semester-status-badge semester-status-current">Current</span>
-            ) : (
-              <span className="semester-status-badge semester-status-completed">Completed</span>
-            )}
+            <span className={`semester-status-badge ${SEMESTER_STATUS_META[semesterStatus(semester)].className}`}>
+              {SEMESTER_STATUS_META[semesterStatus(semester)].label}
+            </span>
             {stats.actualCredits > 0 && <span className="chip chip-ok">{stats.actualCredits} credits</span>}
             {isDeansList && <span className="deans-list-badge">🏅 Dean's List</span>}
           </div>
@@ -2836,8 +2848,18 @@ function AcademicsPage({ semesters, settings, loading, onPersist, onPersistSetti
     setAddingSemester(false);
   };
   const updateSemester = (id, next) => onPersist(list.map((s) => (s.id === id ? next : s)));
-  const setCurrentSemester = (id) =>
-    onPersist(list.map((s) => ({ ...s, isCurrent: s.id === id })));
+  // Setting a semester's status to "current" is exclusive - only one
+  // semester can be current at a time, so any other semester that was
+  // current reverts to completed (its work is presumably done). Setting a
+  // semester to "future" or "completed" only affects that one semester.
+  const setSemesterStatus = (id, status) =>
+    onPersist(list.map((s) => {
+      if (s.id === id) return { ...s, status, isCurrent: undefined };
+      if (status === "current" && semesterStatus(s) === "current") {
+        return { ...s, status: "completed", isCurrent: undefined };
+      }
+      return s;
+    }));
   const removeSemester = (id) => onPersist(list.filter((s) => s.id !== id));
 
   const saveSettings = () => {
@@ -3027,7 +3049,7 @@ function AcademicsPage({ semesters, settings, loading, onPersist, onPersistSetti
                   <Tooltip cursor={{ fill: "#FFF1E9" }} />
                   <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11.5 }} />
                   <Bar dataKey="Goal" fill="var(--peach)" radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="In progress" fill="#3378D8" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="In progress" fill="var(--coral)" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </ChartCard>
@@ -3071,7 +3093,7 @@ function AcademicsPage({ semesters, settings, loading, onPersist, onPersistSetti
             defaultExpanded={false}
             onChange={(next) => updateSemester(s.id, next)}
             onRemove={() => removeSemester(s.id)}
-            onSetCurrent={() => setCurrentSemester(s.id)}
+            onSetStatus={(status) => setSemesterStatus(s.id, status)}
           />
         ))}
 
@@ -6208,6 +6230,15 @@ const CSS = `
 }
 .semester-status-current { color: #2A5C9E; background: #E3EEFD; }
 .semester-status-completed { color: var(--ink-soft); background: #F2E4DD; }
+.semester-status-future { color: #7A4FB5; background: #F1E9FB; }
+
+.semester-status-select {
+  font-family: 'Inter', sans-serif;
+  border: 1px solid var(--line); border-radius: 999px;
+  padding: 5px 10px; font-size: 11.5px; font-weight: 700; color: var(--ink);
+  background: #fff; cursor: pointer; outline: none;
+}
+.semester-status-select:focus { border-color: var(--coral); }
 .semester-credits { font-size: 11.5px; color: var(--ink-soft); }
 .deans-list-badge {
   font-size: 11px; font-weight: 700; color: #B8790C;
