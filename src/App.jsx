@@ -275,7 +275,7 @@ const emptyCourse = () => ({
   id: uid(), courseId: "", name: "", credits: "3",
   category: "Gen-Ed", goalGrade: "A", actualGrade: "", inProgressGrade: "",
 });
-const emptySemester = () => ({ id: uid(), name: "", courses: [] });
+const emptySemester = () => ({ id: uid(), name: "", courses: [], isCurrent: false });
 const TRANSFER_CREDIT_TYPES = ["Transfer Credit", "AP Credit", "Dual Enrollment", "High School Credit", "CLEP / Exam Credit"];
 const emptyTransferCredit = () => ({
   id: uid(), institution: "", courseName: "", type: "Transfer Credit", credits: "3", term: "",
@@ -287,6 +287,7 @@ const defaultGpaSettings = () => ({
   showCategoryBreakdown: false,
   showWhatIfCalculator: false,
   showGradeDistribution: false,
+  showGoalVsProgress: false,
 });
 
 const scaleToPoints = (scale) =>
@@ -2348,7 +2349,7 @@ function StatsPage({ apps }) {
   );
 }
 
-function SemesterCard({ semester, index, threshold, grades, gradePoints, defaultExpanded, onChange, onRemove }) {
+function SemesterCard({ semester, index, threshold, grades, gradePoints, defaultExpanded, onChange, onRemove, onSetCurrent }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [expanded, setExpanded] = useState(defaultExpanded !== false);
   const [quickView, setQuickView] = useState(false);
@@ -2372,6 +2373,11 @@ function SemesterCard({ semester, index, threshold, grades, gradePoints, default
           <ChevronDown size={15} className={`collapsible-chevron ${expanded ? "collapsible-chevron-open" : ""}`} />
           <div className="semester-head-left">
             <span className="semester-name">{semester.name || `Semester ${index + 1}`}</span>
+            {semester.isCurrent ? (
+              <span className="semester-status-badge semester-status-current">Current</span>
+            ) : (
+              <span className="semester-status-badge semester-status-completed">Completed</span>
+            )}
             <span className="semester-gpa-badge">
               {stats.actualGpa === null ? "No grades yet" : `${stats.actualGpa.toFixed(2)} actual`}
             </span>
@@ -2395,6 +2401,11 @@ function SemesterCard({ semester, index, threshold, grades, gradePoints, default
             </div>
           ) : (
             <>
+              {!semester.isCurrent && (
+                <button className="icon-btn" onClick={(e) => { e.stopPropagation(); onSetCurrent(); }} aria-label="Set as current semester" title="Set as current semester">
+                  <Sparkles size={14} />
+                </button>
+              )}
               <button className="icon-btn" onClick={() => setQuickView(true)} aria-label="Quick view" title="Quick view">
                 <Eye size={14} />
               </button>
@@ -2501,6 +2512,11 @@ function SemesterQuickView({ semester, index, stats, isDeansList, onClose }) {
 
         <div className="qv-body">
           <div className="qv-chips">
+            {semester.isCurrent ? (
+              <span className="semester-status-badge semester-status-current">Current</span>
+            ) : (
+              <span className="semester-status-badge semester-status-completed">Completed</span>
+            )}
             {stats.actualCredits > 0 && <span className="chip chip-ok">{stats.actualCredits} credits</span>}
             {isDeansList && <span className="deans-list-badge">🏅 Dean's List</span>}
           </div>
@@ -2801,6 +2817,16 @@ function AcademicsPage({ semesters, settings, loading, onPersist, onPersistSetti
     return { name: g, Goal: goal, Actual: actual };
   }).filter((d) => d.Goal > 0 || d.Actual > 0);
 
+  const goalVsProgressData = list.map((s, i) => {
+    const st = semesterGpa(s, gradePoints);
+    return {
+      name: s.name || `Sem ${i + 1}`,
+      Goal: st.goalGpa === null ? null : Number(st.goalGpa.toFixed(3)),
+      "In progress": st.currentGpa === null ? null : Number(st.currentGpa.toFixed(3)),
+    };
+  }).filter((d) => d.Goal !== null || d["In progress"] !== null);
+  const showGoalVsProgressChart = settings.showGoalVsProgress && goalVsProgressData.length > 0;
+
   const neededGpa = gpaNeeded(whatIfTarget, cumulative.credits, cumulative.gpa || 0, whatIfCredits);
 
   const addSemester = () => {
@@ -2810,6 +2836,8 @@ function AcademicsPage({ semesters, settings, loading, onPersist, onPersistSetti
     setAddingSemester(false);
   };
   const updateSemester = (id, next) => onPersist(list.map((s) => (s.id === id ? next : s)));
+  const setCurrentSemester = (id) =>
+    onPersist(list.map((s) => ({ ...s, isCurrent: s.id === id })));
   const removeSemester = (id) => onPersist(list.filter((s) => s.id !== id));
 
   const saveSettings = () => {
@@ -2973,7 +3001,7 @@ function AcademicsPage({ semesters, settings, loading, onPersist, onPersistSetti
 
       <GradeScaleEditor gradeScale={gradeScale} onSave={saveGradeScale} />
 
-      {(showCumulativeChart || showGradeChart) && (
+      {(showCumulativeChart || showGradeChart || showGoalVsProgressChart) && (
         <div className="stats-grid">
           {showCumulativeChart && (
             <ChartCard title="Cumulative GPA by semester" subtitle="Actual GPA, running total">
@@ -2985,6 +3013,22 @@ function AcademicsPage({ semesters, settings, loading, onPersist, onPersistSetti
                   <Tooltip content={<StatsTooltip />} />
                   <Line type="monotone" dataKey="value" stroke="var(--coral)" strokeWidth={2.5} dot={{ r: 4, fill: "var(--coral)" }} />
                 </LineChart>
+              </ResponsiveContainer>
+            </ChartCard>
+          )}
+
+          {showGoalVsProgressChart && (
+            <ChartCard title="Goal vs. in-progress GPA" subtitle="Per semester, including current estimates">
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart data={goalVsProgressData} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F2E4DD" />
+                  <XAxis dataKey="name" tick={{ fontSize: 10.5, fill: "#7A6470" }} axisLine={false} tickLine={false} />
+                  <YAxis domain={[0, 4]} tick={{ fontSize: 11, fill: "#7A6470" }} axisLine={false} tickLine={false} />
+                  <Tooltip cursor={{ fill: "#FFF1E9" }} />
+                  <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11.5 }} />
+                  <Bar dataKey="Goal" fill="var(--peach)" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="In progress" fill="#3378D8" radius={[4, 4, 0, 0]} />
+                </BarChart>
               </ResponsiveContainer>
             </ChartCard>
           )}
@@ -3027,6 +3071,7 @@ function AcademicsPage({ semesters, settings, loading, onPersist, onPersistSetti
             defaultExpanded={false}
             onChange={(next) => updateSemester(s.id, next)}
             onRemove={() => removeSemester(s.id)}
+            onSetCurrent={() => setCurrentSemester(s.id)}
           />
         ))}
 
@@ -4376,6 +4421,12 @@ function SettingsPage({ logoId, onChangeLogo, account, onUpdateAccount, onSignOu
             onChange={() => toggleGpaSetting("showGradeDistribution")}
             label="Grade distribution chart"
             description="Goal vs. actual grades, by letter"
+          />
+          <ToggleSwitch
+            checked={!!gpaSettings.showGoalVsProgress}
+            onChange={() => toggleGpaSetting("showGoalVsProgress")}
+            label="Goal vs. in-progress GPA chart"
+            description="See how your current trending grades compare to your goals, per semester"
           />
         </div>
         </>
@@ -6151,6 +6202,12 @@ const CSS = `
   background: #FFF1EC; padding: 3px 9px; border-radius: 999px;
 }
 .semester-gpa-badge-goal { color: #B8790C; background: #FFF3D6; }
+.semester-status-badge {
+  font-size: 10.5px; font-weight: 700; padding: 3px 9px; border-radius: 999px;
+  text-transform: uppercase; letter-spacing: 0.03em;
+}
+.semester-status-current { color: #2A5C9E; background: #E3EEFD; }
+.semester-status-completed { color: var(--ink-soft); background: #F2E4DD; }
 .semester-credits { font-size: 11.5px; color: var(--ink-soft); }
 .deans-list-badge {
   font-size: 11px; font-weight: 700; color: #B8790C;
