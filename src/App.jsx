@@ -1099,6 +1099,34 @@ function InternlyApp() {
       return { company: "", link: "" };
     }
   });
+  // Logs that the app was opened in a browser, separate from Supabase's
+  // own "last signed in" (which only updates on a fresh credential login,
+  // not when an existing session is silently reused). Fires once per page
+  // load, logged in or not - failures here are non-fatal and never block
+  // the app from loading.
+  useEffect(() => {
+    (async () => {
+      try {
+        const session = sbLoadSession();
+        await fetch(`${SUPABASE_URL}/rest/v1/site_visits`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            apikey: SUPABASE_ANON_KEY,
+            Authorization: `Bearer ${session?.access_token || SUPABASE_ANON_KEY}`,
+          },
+          body: JSON.stringify([{
+            user_id: session?.user?.id || null,
+            user_email: session?.user?.email || null,
+            user_agent: navigator.userAgent,
+          }]),
+        });
+      } catch (e) {
+        // non-fatal - a missed visit log should never block the app
+      }
+    })();
+  }, []);
+
   useEffect(() => {
     try {
       if (quickSaveDraft.company || quickSaveDraft.link) {
